@@ -198,16 +198,6 @@ class BaseLinuxMixin(virtual_machine.BaseOsMixin):
       self.SetupPackageManager()
     self.BurnCpu()
 
-  @vm_util.Retry(log_errors=False, poll_interval=1)
-  def WaitForBootCompletion(self):
-    """Waits until VM is has booted."""
-    resp, _ = self.RemoteHostCommand('hostname', retries=1,
-                                     suppress_warning=True)
-    if self.bootable_time is None:
-      self.bootable_time = time.time()
-    if self.hostname is None:
-      self.hostname = resp[:-1]
-
   def SnapshotPackages(self):
     """Grabs a snapshot of the currently installed packages."""
     pass
@@ -261,10 +251,7 @@ class BaseLinuxMixin(virtual_machine.BaseOsMixin):
                'sudo chown -R $USER:$USER {1};').format(device_path, mount_path)
     self.RemoteHostCommand(mnt_cmd)
 
-  def RemoteCopy(self, file_path, remote_path='', copy_to=True):
-    self.RemoteHostCopy(file_path, remote_path, copy_to)
-
-  def RemoteHostCopy(self, file_path, remote_path='', copy_to=True):
+  def RemoteHostCopy(self, file_path, remote_path, copy_to=True):
     """Copies a file to or from the VM.
 
     Args:
@@ -275,42 +262,10 @@ class BaseLinuxMixin(virtual_machine.BaseOsMixin):
     Raises:
       RemoteCommandError: If there was a problem copying the file.
     """
-    if vm_util.RunningOnWindows():
-      if ':' in file_path:
-        # scp doesn't like colons in paths.
-        file_path = file_path.split(':', 1)[1]
-      # Replace the last instance of '\' with '/' to make scp happy.
-      file_path = '/'.join(file_path.rsplit('\\', 1))
-
-    remote_location = '%s@%s:%s' % (
-        self.user_name, self.ip_address, remote_path)
-    scp_cmd = ['scp', '-P', str(self.ssh_port), '-pr']
-    scp_cmd.extend(vm_util.GetSshOptions(self.ssh_private_key))
-    if copy_to:
-      scp_cmd.extend([file_path, remote_location])
-    else:
-      scp_cmd.extend([remote_location, file_path])
-
-    stdout, stderr, retcode = vm_util.IssueCommand(scp_cmd, timeout=None)
-
-    if retcode:
-      full_cmd = ' '.join(scp_cmd)
-      error_text = ('Got non-zero return code (%s) executing %s\n'
-                    'STDOUT: %sSTDERR: %s' %
-                    (retcode, full_cmd, stdout, stderr))
-      raise errors.VirtualMachine.RemoteCommandError(error_text)
-
-  def RemoteCommand(self, command,
-                    should_log=False, retries=SSH_RETRIES,
-                    ignore_failure=False, login_shell=False,
-                    suppress_warning=False, timeout=None):
-    return self.RemoteHostCommand(command, should_log, retries,
-                                  ignore_failure, login_shell,
-                                  suppress_warning, timeout)
+    self.transport.RemoteCopy(file_path, remote_path, copy_to)
 
   def RemoteHostCommand(self, command,
-                        should_log=False, retries=SSH_RETRIES,
-                        ignore_failure=False, login_shell=False,
+                        should_log=False, ignore_failure=False,
                         suppress_warning=False, timeout=None):
     """Runs a command on the VM.
 
@@ -325,7 +280,6 @@ class BaseLinuxMixin(virtual_machine.BaseOsMixin):
       retries: The maximum number of times RemoteCommand should retry SSHing
           when it receives a 255 return code.
       ignore_failure: Ignore any failure if set to true.
-      login_shell: Run command in a login shell.
       suppress_warning: Suppress the result logging from IssueCommand when the
           return code is non-zero.
 
@@ -335,41 +289,9 @@ class BaseLinuxMixin(virtual_machine.BaseOsMixin):
     Raises:
       RemoteCommandError: If there was a problem establishing the connection.
     """
-    if vm_util.RunningOnWindows():
-      # Multi-line commands passed to ssh won't work on Windows unless the
-      # newlines are escaped.
-      command = command.replace('\n', '\\n')
-
-    user_host = '%s@%s' % (self.user_name, self.ip_address)
-    ssh_cmd = ['ssh', '-A', '-p', str(self.ssh_port), user_host]
-    ssh_cmd.extend(vm_util.GetSshOptions(self.ssh_private_key))
-    try:
-      if login_shell:
-        ssh_cmd.extend(['-t', '-t', 'bash -l -c "%s"' % command])
-        self._pseudo_tty_lock.acquire()
-      else:
-        ssh_cmd.append(command)
-
-      for _ in range(retries):
-        stdout, stderr, retcode = vm_util.IssueCommand(
-            ssh_cmd, force_info_log=should_log,
-            suppress_warning=suppress_warning,
-            timeout=timeout)
-        if retcode != 255:  # Retry on 255 because this indicates an SSH failure
-          break
-    finally:
-      if login_shell:
-        self._pseudo_tty_lock.release()
-
-    if retcode:
-      full_cmd = ' '.join(ssh_cmd)
-      error_text = ('Got non-zero return code (%s) executing %s\n'
-                    'Full command: %s\nSTDOUT: %sSTDERR: %s' %
-                    (retcode, command, full_cmd, stdout, stderr))
-      if not ignore_failure:
-        raise errors.VirtualMachine.RemoteCommandError(error_text)
-
-    return stdout, stderr
+    return self.transport.RemoteCommand(command, should_log,
+                                        ignore_failure, suppress_warning,
+                                        timeout)
 
   def MoveFile(self, target, source_path, remote_path=''):
     self.MoveHostFile(target, source_path, remote_path)
@@ -566,8 +488,7 @@ class RhelMixin(BaseLinuxMixin):
   def OnStartup(self):
     """Eliminates the need to have a tty to run sudo commands."""
     self.RemoteHostCommand('echo \'Defaults:%s !requiretty\' | '
-                           'sudo tee /etc/sudoers.d/pkb' % self.user_name,
-                           login_shell=True)
+                           'sudo tee /etc/sudoers.d/pkb' % self.user_name)
 
 
   def InstallEpelRepo(self):
@@ -791,9 +712,7 @@ class ContainerizedDebianMixin(DebianMixin):
     """Returns whether docker is installed or not."""
     resp, _ = self.RemoteHostCommand('command -v docker', ignore_failure=True,
                                      suppress_warning=True)
-    if resp.rstrip() == "":
-      return False
-    return True
+    return (resp.rstrip() != "")
 
   def PrepareVMEnvironment(self):
     """Initializes docker before proceeding with preparation."""
@@ -822,11 +741,10 @@ class ContainerizedDebianMixin(DebianMixin):
 
     resp, _ = self.RemoteHostCommand(init_docker_cmd)
     self.docker_id = resp.rstrip()
-    return self.docker_id
 
   def RemoteCommand(self, command,
-                    should_log=False, retries=SSH_RETRIES,
-                    ignore_failure=False, login_shell=False,
+                    should_log=False,
+                    ignore_failure=False,
                     suppress_warning=False, timeout=None):
     """Runs a command inside the container.
 
@@ -838,20 +756,20 @@ class ContainerizedDebianMixin(DebianMixin):
       retries: The maximum number of times RemoteCommand should retry SSHing
           when it receives a 255 return code.
       ignore_failure: Ignore any failure if set to true.
-      login_shell: Run command in a login shell.
       suppress_warning: Suppress the result logging from IssueCommand when the
           return code is non-zero.
 
     Returns:
       A tuple of stdout and stderr from running the command.
     """
-    # Escapes bash sequences
-    command = command.replace("'", r"'\''")
+    if hasattr(self, 'docker_id'):
+      # Escapes bash sequences
+      command = command.replace("'", r"'\''")
 
-    logging.info('Docker running: %s' % command)
-    command = "sudo docker exec %s bash -c '%s'" % (self.docker_id, command)
-    return self.RemoteHostCommand(command, should_log, retries,
-                                  ignore_failure, login_shell, suppress_warning)
+      logging.info('Docker running: %s' % command)
+      command = "sudo docker exec %s bash -c '%s'" % (self.docker_id, command)
+    return self.RemoteHostCommand(
+        command, should_log, ignore_failure, suppress_warning)
 
   def ContainerCopy(self, file_name, container_path='', copy_to=True):
     """Copies a file to and from container_path to the host's vm_util.VM_TMP_DIR.

@@ -97,7 +97,8 @@ def Prepare(benchmark_spec):
         required to run the benchmark.
   """
   vms = benchmark_spec.vms
-  vm_util.RunThreaded(PreparePrivateKey, vms)
+  if FLAGS.copy_benchmark_mode == 'scp':
+    vm_util.RunThreaded(PreparePrivateKey, vms)
   vm_util.RunThreaded(PrepareDataFile, vms)
 
 

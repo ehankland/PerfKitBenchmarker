@@ -516,8 +516,13 @@ def IssueCommand(cmd, force_info_log=False, suppress_warning=False,
   logging.info('Running: %s', full_cmd)
 
   shell_value = RunningOnWindows()
+  if input:
+    stdin = subprocess.PIPE
+  else:
+    stdin = None
+
   process = subprocess.Popen(cmd, env=env, shell=shell_value,
-                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stdin=stdin, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE)
 
   def _KillProcess():

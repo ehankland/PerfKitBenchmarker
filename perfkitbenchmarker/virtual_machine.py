@@ -21,6 +21,7 @@ operate on the VM: boot, shutdown, etc.
 import abc
 import os.path
 import threading
+import time
 
 import jinja2
 
@@ -29,6 +30,7 @@ from perfkitbenchmarker import disk
 from perfkitbenchmarker import errors
 from perfkitbenchmarker import flags
 from perfkitbenchmarker import resource
+from perfkitbenchmarker import transport
 from perfkitbenchmarker import vm_util
 from perfkitbenchmarker.configs import option_decoders
 from perfkitbenchmarker.configs import spec
@@ -263,7 +265,7 @@ class BaseVirtualMachine(resource.BaseResource):
 
   def AllowRemoteAccessPorts(self):
     """Allow all ports in self.remote_access_ports."""
-    for port in self.remote_access_ports:
+    for port in self.transport.remote_access_ports:
       self.AllowPort(port)
 
   def AddMetadata(self, **kwargs):
@@ -325,23 +327,24 @@ class BaseOsMixin(object):
     self._total_memory_kb = None
     self._num_cpus = None
 
-  @abc.abstractmethod
+    if self.OS_TYPE == 'windows':
+      self.transport = transport.WinrmTransport(self)
+    else:
+      self.transport = transport.SshTransport(self)
+
   def RemoteCommand(self, command, should_log=False, ignore_failure=False,
-                    suppress_warning=False, timeout=None, **kwargs):
+                    suppress_warning=False, timeout=None):
     """Runs a command on the VM.
 
-    Derived classes may add additional kwargs if necessary, but they should not
-    be used outside of the class itself since they are non standard.
-
     Args:
-      command: A valid bash command.
+      command: A valid command.
       should_log: A boolean indicating whether the command result should be
           logged at the info level. Even if it is false, the results will
           still be logged at the debug level.
       ignore_failure: Ignore any failure if set to true.
       suppress_warning: Suppress the result logging from IssueCommand when the
           return code is non-zero.
-      timeout is the time to wait in seconds for the command before exiting.
+      timeout: The time to wait in seconds for the command before exiting.
           None means no timeout.
 
     Returns:
@@ -350,9 +353,9 @@ class BaseOsMixin(object):
     Raises:
       RemoteCommandError: If there was a problem issuing the command.
     """
-    raise NotImplementedError()
+    return self.transport.RemoteCommand(command, should_log, ignore_failure,
+                                        suppress_warning, timeout)
 
-  @abc.abstractmethod
   def RemoteCopy(self, file_path, remote_path='', copy_to=True):
     """Copies a file to or from the VM.
 
@@ -364,16 +367,16 @@ class BaseOsMixin(object):
     Raises:
       RemoteCommandError: If there was a problem copying the file.
     """
-    raise NotImplementedError()
+    return self.transport.RemoteCopy(file_path, remote_path, copy_to)
 
-  @abc.abstractmethod
+  @vm_util.Retry(log_errors=False, poll_interval=1)
   def WaitForBootCompletion(self):
-    """Waits until VM is has booted.
-
-    Implementations of this method should set the 'bootable_time' attribute
-    and the 'hostname' attribute.
-    """
-    raise NotImplementedError()
+    """Waits until VM is has booted."""
+    resp, _ = self.transport.RemoteCommand('hostname', suppress_warning=True)
+    if self.bootable_time is None:
+      self.bootable_time = time.time()
+    if self.hostname is None:
+      self.hostname = resp.rstrip()
 
   def OnStartup(self):
     """Performs any necessary setup on the VM specific to the OS.

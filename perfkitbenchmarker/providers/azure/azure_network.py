@@ -55,8 +55,6 @@ class AzureFirewall(network.BaseFirewall):
       vm: The BaseVirtualMachine object to open the port for.
       port: The local port to open.
     """
-    if vm.is_static or port == SSH_PORT:
-      return
     create_cmd = [AZURE_PATH,
                   'vm',
                   'endpoint',

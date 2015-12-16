@@ -346,7 +346,7 @@ class WindowsAwsVirtualMachine(AwsVirtualMachine,
     super(WindowsAwsVirtualMachine, self).__init__(vm_spec)
     self.user_name = 'Administrator'
     self.user_data = ('<powershell>%s</powershell>' %
-                      windows_virtual_machine.STARTUP_SCRIPT)
+                      self.transport.GetWindowsScript())
 
   @vm_util.Retry()
   def _GetDecodedPasswordData(self):

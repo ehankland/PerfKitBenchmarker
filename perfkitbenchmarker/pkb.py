@@ -464,11 +464,6 @@ def RunBenchmarks(publish=True):
 
   _LogCommandLineFlags()
 
-  if FLAGS.os_type == benchmark_spec.WINDOWS and not vm_util.RunningOnWindows():
-    logging.error('In order to run benchmarks on Windows VMs, you must be '
-                  'running on Windows.')
-    return 1
-
   collector = SampleCollector()
 
   if FLAGS.static_vm_file:

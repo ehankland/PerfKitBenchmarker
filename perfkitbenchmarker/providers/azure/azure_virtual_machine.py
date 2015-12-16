@@ -320,7 +320,7 @@ class WindowsAzureVirtualMachine(AzureVirtualMachine,
 
   def _PostCreate(self):
     super(WindowsAzureVirtualMachine, self)._PostCreate()
-    config_dict = {'commandToExecute': windows_virtual_machine.STARTUP_SCRIPT}
+    config_dict = {'commandToExecute': self.transport.GetWindowsScript()}
     config = json.dumps(config_dict)
     set_extension_command = [AZURE_PATH,
                              'vm',

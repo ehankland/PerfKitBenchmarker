@@ -14,7 +14,6 @@
 
 import ntpath
 import os
-import time
 
 from perfkitbenchmarker import disk
 from perfkitbenchmarker import errors
@@ -43,118 +42,7 @@ class WindowsMixin(virtual_machine.BaseOsMixin):
     super(WindowsMixin, self).__init__()
     self.winrm_port = WINRM_PORT
     self.smb_port = SMB_PORT
-    self.remote_access_ports = [self.winrm_port, self.smb_port]
     self.temp_dir = None
-
-  def RemoteCommand(self, command, should_log=False, ignore_failure=False,
-                    suppress_warning=False, timeout=None):
-    """Runs a command on the VM.
-
-    Args:
-      command: A valid bash command.
-      should_log: A boolean indicating whether the command result should be
-          logged at the info level. Even if it is false, the results will
-          still be logged at the debug level.
-      ignore_failure: Ignore any failure if set to true.
-      suppress_warning: Suppress the result logging from IssueCommand when the
-          return code is non-zero.
-
-    Returns:
-      A tuple of stdout and stderr from running the command.
-
-    Raises:
-      RemoteCommandError: If there was a problem issuing the command.
-    """
-    set_error_pref = '$ErrorActionPreference="Stop"'
-
-    password = self.password.replace("'", "''")
-    create_cred = (
-        '$pw = convertto-securestring -AsPlainText -Force \'%s\';'
-        '$cred = new-object -typename System.Management.Automation'
-        '.PSCredential -argumentlist %s,$pw' % (password, self.user_name))
-
-    create_session = (
-        '$session = New-PSSession -Credential $cred -Port %s -ComputerName %s' %
-        (self.winrm_port, self.ip_address))
-
-    invoke_command = (
-        'Invoke-Command -Session $session -ScriptBlock { %s };'
-        'exit Invoke-Command -Session $session -ScriptBlock '
-        '{ $LastExitCode }' % command)
-
-    cmd = ';'.join([set_error_pref, create_cred,
-                    create_session, invoke_command])
-
-    stdout, stderr, retcode = vm_util.IssueCommand(
-        ['powershell', '-Command', cmd], timeout=timeout,
-        suppress_warning=suppress_warning, force_info_log=should_log)
-
-    if retcode and not ignore_failure:
-      error_text = ('Got non-zero return code (%s) executing %s\n'
-                    'Full command: %s\nSTDOUT: %sSTDERR: %s' %
-                    (retcode, command, cmd, stdout, stderr))
-      raise errors.VirtualMachine.RemoteCommandError(error_text)
-
-    return stdout, stderr
-
-  def RemoteCopy(self, local_path, remote_path='', copy_to=True):
-    """Copies a file to or from the VM.
-
-    Args:
-      local_path: Local path to file.
-      remote_path: Optional path of where to copy file on remote host.
-      copy_to: True to copy to vm, False to copy from vm.
-
-    Raises:
-      RemoteCommandError: If there was a problem copying the file.
-    """
-    drive, remote_path = ntpath.splitdrive(remote_path)
-    drive = (drive or self.system_drive).rstrip(':')
-
-    set_error_pref = '$ErrorActionPreference="Stop"'
-
-    password = self.password.replace("'", "''")
-    create_cred = (
-        '$pw = convertto-securestring -AsPlainText -Force \'%s\';'
-        '$cred = new-object -typename System.Management.Automation'
-        '.PSCredential -argumentlist %s,$pw' % (password, self.user_name))
-
-    psdrive_name = self.name
-    root = '\\\\%s\\%s$' % (self.ip_address, drive)
-    create_psdrive = (
-        'New-PSDrive -Name %s -PSProvider filesystem -Root '
-        '%s -Credential $cred' % (psdrive_name, root))
-
-    remote_path = '%s:%s' % (psdrive_name, remote_path)
-    if copy_to:
-      from_path, to_path = local_path, remote_path
-    else:
-      from_path, to_path = remote_path, local_path
-
-    copy_item = 'Copy-Item -Path %s -Destination %s' % (from_path, to_path)
-
-    delete_connection = 'net use %s /delete' % root
-
-    cmd = ';'.join([set_error_pref, create_cred, create_psdrive,
-                    copy_item, delete_connection])
-
-    stdout, stderr, retcode = vm_util.IssueCommand(
-        ['powershell', '-Command', cmd], timeout=None)
-
-    if retcode:
-      error_text = ('Got non-zero return code (%s) executing %s\n'
-                    'STDOUT: %sSTDERR: %s' %
-                    (retcode, cmd, stdout, stderr))
-      raise errors.VirtualMachine.RemoteCommandError(error_text)
-
-  @vm_util.Retry(log_errors=False, poll_interval=1)
-  def WaitForBootCompletion(self):
-    """Waits until VM is has booted."""
-    stdout, _ = self.RemoteCommand('hostname', suppress_warning=True)
-    if self.bootable_time is None:
-      self.bootable_time = time.time()
-    if self.hostname is None:
-      self.hostname = stdout.rstrip()
 
   def OnStartup(self):
     stdout, _ = self.RemoteCommand('echo $env:TEMP')

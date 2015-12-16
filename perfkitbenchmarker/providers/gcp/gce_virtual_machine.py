@@ -438,7 +438,7 @@ class WindowsGceVirtualMachine(GceVirtualMachine,
     """
     super(WindowsGceVirtualMachine, self).__init__(vm_spec)
     self.boot_metadata[
-        'windows-startup-script-ps1'] = windows_virtual_machine.STARTUP_SCRIPT
+        'windows-startup-script-ps1'] = self.transport.GetWindowsScript()
 
   def _GenerateResetPasswordCommand(self):
     """Generates a command to reset a VM user's password.
