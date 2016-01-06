@@ -54,6 +54,8 @@ $config | Out-File 'C:\Program Files (x86)\\freeSSHd\FreeSSHDService.ini'
 net start freesshdservice
 """
 
+SMB_PORT = 445
+WINRM_PORT = 5985
 WINRM_SCRIPT = """
 Enable-PSRemoting -force
 Set-Item wsman:\\localhost\\client\\trustedhosts * -Force
@@ -207,6 +209,7 @@ class WindowsSshTransport(SshTransport):
 class WinrmTransport(BaseTransport):
 
   NAME = 'WinRM'
+  remote_access_ports = [WINRM_PORT, SMB_PORT]
 
   def RemoteCommand(self, command, should_log=False, ignore_failure=False,
                     suppress_warning=False, timeout=None):
