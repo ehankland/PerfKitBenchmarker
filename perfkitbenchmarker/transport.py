@@ -31,7 +31,13 @@ import ntpath
 
 from perfkitbenchmarker import data
 from perfkitbenchmarker import errors
+from perfkitbenchmarker import flags
 from perfkitbenchmarker import vm_util
+
+flags.DEFINE_string('transport', None,
+                    'The name of the transport to use (e.g. ssh).')
+
+RHEL = 'rhel'
 
 SSH_WINDOWS = """
 cd /
@@ -62,11 +68,41 @@ Set-Item wsman:\\localhost\\client\\trustedhosts * -Force
 Restart-Service WinRM
 netsh advfirewall set allprofiles state off
 """
+WINDOWS = 'windows'
+
+_TRANSPORT_REGISTRY = {}
+
+
+def GetDefaultTransportFromOs(os_type):
+  """Returns the default transport for a given os type."""
+  if os_type == WINDOWS:
+    if vm_util.RunningOnWindows():
+      return 'WinRM'
+    else:
+      return 'windows_ssh'
+  else:
+    return 'ssh'
+
+
+def GetTransportClass(name):
+  """Gets the transport associated with the name."""
+  return _TRANSPORT_REGISTRY.get(name)
+
+
+class AutoRegisterTransport(type):
+  """Metaclass which registers transports."""
+
+  def __init__(cls, name, bases, dct):
+    super(AutoRegisterTransport, cls).__init__(name, bases, dct)
+    if cls.NAME in _TRANSPORT_REGISTRY:
+      raise Exception('BaseTransport subclasses must have a NAME attribute.')
+    _TRANSPORT_REGISTRY[cls.NAME] = cls
 
 
 class BaseTransport(object):
 
   NAME = None
+  __metaclass__ = AutoRegisterTransport
 
   # Ports that will be opened by benchmark_spec to permit access to the VM
   remote_access_ports = []
@@ -110,7 +146,11 @@ class BaseTransport(object):
     """
     raise NotImplementedError()
 
-  def GetWindowsScript():
+  def OnStartup(self):
+    """Commands which will be run after initially connecting to the VM."""
+    pass
+
+  def GetWindowsScript(self):
     """Returns a script to run on a Windows VM to bootstrap the transport."""
     raise NotImplementedError()
 
@@ -126,7 +166,7 @@ class SshTransport(BaseTransport):
     return cls(vm.ip_address, vm.ssh_port, vm.user_name, vm.ssh_private_key)
 
   def RemoteCommand(self, command, should_log=False, ignore_failure=False,
-                    suppress_warning=False, timeout=None):
+                    suppress_warning=False, timeout=None, ssh_options=None):
     """Runs a command on the VM."""
     if vm_util.RunningOnWindows():
       # Multi-line commands passed to ssh won't work on Windows unless the
@@ -136,6 +176,8 @@ class SshTransport(BaseTransport):
     user_host = '%s@%s' % (self.vm.user_name, self.vm.ip_address)
     ssh_cmd = ['ssh', '-A', '-p', str(self.vm.ssh_port), user_host]
     ssh_cmd.extend(vm_util.GetSshOptions(self.vm.ssh_private_key))
+    if ssh_options:
+      ssh_cmd.extend(ssh_options)
     ssh_cmd.append(command)
 
     stdout, stderr, retcode = vm_util.IssueCommand(
@@ -179,6 +221,14 @@ class SshTransport(BaseTransport):
                     'STDOUT: %sSTDERR: %s' %
                     (retcode, full_cmd, stdout, stderr))
       raise errors.VirtualMachine.RemoteCommandError(error_text)
+
+  def OnStartup(self):
+    """Commands which will be run after initially connecting to the VM."""
+    if self.vm.OS_TYPE == RHEL:
+      options = ['-t', '-t']
+      self.RemoteCommand('echo \'Defaults:%s !requiretty\' | '
+                         'sudo tee /etc/sudoers.d/pkb' % self.vm.user_name,
+                         ssh_options=options)
 
 
 class WindowsSshTransport(SshTransport):

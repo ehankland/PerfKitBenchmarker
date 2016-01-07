@@ -120,6 +120,8 @@ class BaseVmSpec(spec.BaseSpec):
     if flag_values['background_cpu_threads'].present:
       config_values['background_cpu_threads'] = (
           flag_values.background_cpu_threads)
+    if flag_values['transport'].present:
+      config_values['transport'] = flag_values.transport
 
   @classmethod
   def _GetOptionDecoderConstructions(cls):
@@ -143,7 +145,9 @@ class BaseVmSpec(spec.BaseSpec):
         'zone': (option_decoders.StringDecoder, {'none_ok': True,
                                                  'default': None}),
         'background_cpu_threads': (option_decoders.IntDecoder, {
-            'none_ok': True, 'default': None})})
+            'none_ok': True, 'default': None}),
+        'transport': (option_decoders.StringDecoder, {'none_ok': True,
+                                                      'default': None})})
     return result
 
 
@@ -209,6 +213,14 @@ class BaseVirtualMachine(resource.BaseResource):
     self.local_disk_counter = 0
     self.remote_disk_counter = 0
     self.background_cpu_threads = vm_spec.background_cpu_threads
+
+    if hasattr(self, 'OS_TYPE'):
+      transport_name = (vm_spec.transport or
+                        transport.GetDefaultTransportFromOs(self.OS_TYPE))
+      transport_class = transport.GetTransportClass(transport_name)
+      self.transport = transport_class(self)
+    else:
+      self.transport = None
 
     self.network = None
     self.firewall = None
@@ -327,11 +339,6 @@ class BaseOsMixin(object):
     self._total_memory_kb = None
     self._num_cpus = None
 
-    if self.OS_TYPE == 'windows':
-      self.transport = transport.WinrmTransport(self)
-    else:
-      self.transport = transport.SshTransport(self)
-
   def RemoteCommand(self, command, should_log=False, ignore_failure=False,
                     suppress_warning=False, timeout=None):
     """Runs a command on the VM.
@@ -371,7 +378,7 @@ class BaseOsMixin(object):
 
   @vm_util.Retry(log_errors=False, poll_interval=1)
   def WaitForBootCompletion(self):
-    """Waits until VM is has booted."""
+    """Waits until the VM has booted."""
     resp, _ = self.transport.RemoteCommand('hostname', suppress_warning=True)
     if self.bootable_time is None:
       self.bootable_time = time.time()
@@ -383,7 +390,7 @@ class BaseOsMixin(object):
 
     This will be called once immediately after the VM has booted.
     """
-    pass
+    self.transport.OnStartup()
 
   def PrepareVMEnvironment(self):
     """Performs any necessary setup on the VM specific to the OS.

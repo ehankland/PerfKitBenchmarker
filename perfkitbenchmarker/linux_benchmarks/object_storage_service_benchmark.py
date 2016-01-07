@@ -824,7 +824,7 @@ class GoogleCloudStorageBenchmark(object):
     vm.PushFile(FLAGS.object_storage_credential_file, '.config/gcloud')
     vm.PushFile(FLAGS.boto_file_location, DEFAULT_BOTO_LOCATION)
 
-    vm.gsutil_path, _ = vm.RemoteCommand('which gsutil', login_shell=True)
+    vm.gsutil_path, _ = vm.RemoteCommand('bash -l -c "which gsutil"')
     vm.gsutil_path = vm.gsutil_path.split()[0]
 
     vm.bucket_name = 'pkb%s' % FLAGS.run_uri

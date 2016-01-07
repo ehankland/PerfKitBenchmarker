@@ -42,6 +42,7 @@ class WindowsMixin(virtual_machine.BaseOsMixin):
     super(WindowsMixin, self).__init__()
     self.winrm_port = WINRM_PORT
     self.smb_port = SMB_PORT
+    self.ssh_port = 22
     self.temp_dir = None
 
   def OnStartup(self):

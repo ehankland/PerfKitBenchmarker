@@ -160,8 +160,8 @@ class BaseLinuxMixin(virtual_machine.BaseOsMixin):
 
   def SetupRemoteFirewall(self):
     """Sets up IP table configurations on the VM."""
-    self.RemoteHostCommand('sudo iptables -A INPUT -j ACCEPT')
-    self.RemoteHostCommand('sudo iptables -A OUTPUT -j ACCEPT')
+    self.RemoteCommand('sudo iptables -A INPUT -j ACCEPT')
+    self.RemoteCommand('sudo iptables -A OUTPUT -j ACCEPT')
 
   def SetupProxy(self):
     """Sets up proxy configuration variables for the cloud environment."""
@@ -243,13 +243,13 @@ class BaseLinuxMixin(virtual_machine.BaseOsMixin):
     fmt_cmd = ('[[ -d /mnt ]] && sudo umount /mnt; '
                'sudo mke2fs -F -E lazy_itable_init=0 -O '
                '^has_journal -t ext4 -b 4096 %s' % device_path)
-    self.RemoteHostCommand(fmt_cmd)
+    self.RemoteCommand(fmt_cmd)
 
   def MountDisk(self, device_path, mount_path):
     """Mounts a formatted disk in the VM."""
     mnt_cmd = ('sudo mkdir -p {1};sudo mount {0} {1};'
                'sudo chown -R $USER:$USER {1};').format(device_path, mount_path)
-    self.RemoteHostCommand(mnt_cmd)
+    self.RemoteCommand(mnt_cmd)
 
   def RemoteHostCopy(self, file_path, remote_path, copy_to=True):
     """Copies a file to or from the VM.
@@ -441,7 +441,7 @@ class BaseLinuxMixin(virtual_machine.BaseOsMixin):
     self.Install('mdadm')
     stripe_cmd = ('yes | sudo mdadm --create %s --level=stripe --raid-devices='
                   '%s %s' % (striped_device, len(devices), ' '.join(devices)))
-    self.RemoteHostCommand(stripe_cmd)
+    self.RemoteCommand(stripe_cmd)
 
   def BurnCpu(self, burn_cpu_threads=None, burn_cpu_seconds=None):
     """Burns vm cpu for some amount of time and dirty cache.
@@ -484,12 +484,6 @@ class RhelMixin(BaseLinuxMixin):
   """Class holding RHEL specific VM methods and attributes."""
 
   OS_TYPE = 'rhel'
-
-  def OnStartup(self):
-    """Eliminates the need to have a tty to run sudo commands."""
-    self.RemoteHostCommand('echo \'Defaults:%s !requiretty\' | '
-                           'sudo tee /etc/sudoers.d/pkb' % self.user_name)
-
 
   def InstallEpelRepo(self):
     """Installs the Extra Packages for Enterprise Linux repository."""

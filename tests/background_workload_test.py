@@ -116,6 +116,7 @@ class TestBackgroundWorkload(unittest.TestCase):
       self.setupCommonFlags(mocked_flags)
       mocked_flags.background_cpu_threads = 1
       mocked_flags.os_type = benchmark_spec.WINDOWS
+      mocked_flags.transport = 'WinRM'
       config = configs.LoadConfig(ping_benchmark.BENCHMARK_CONFIG, {}, NAME)
       spec = benchmark_spec.BenchmarkSpec(config, NAME, UID)
       spec.ConstructVirtualMachines()
@@ -154,6 +155,7 @@ class TestBackgroundWorkload(unittest.TestCase):
     with mock_flags.PatchFlags() as mocked_flags:
       self.setupCommonFlags(mocked_flags)
       mocked_flags.os_type = benchmark_spec.WINDOWS
+      mocked_flags.transport = 'WinRM'
       mocked_flags.background_cpu_threads = None
       config = configs.LoadConfig(ping_benchmark.BENCHMARK_CONFIG, {}, NAME)
       spec = benchmark_spec.BenchmarkSpec(config, NAME, UID)

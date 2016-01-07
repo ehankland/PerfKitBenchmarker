@@ -28,13 +28,13 @@ DOCKER_RPM_URL = ('https://get.docker.com/rpm/1.7.0/centos-6/'
 
 def YumInstall(vm):
   """Installs the docker package on the VM."""
-  vm.RemoteHostCommand('curl -o %s/docker.rpm -sSL %s'
-                       % (vm_util.VM_TMP_DIR, DOCKER_RPM_URL))
-  vm.RemoteHostCommand('sudo yum localinstall '
-                       '--nogpgcheck %s/docker.rpm -y' % vm_util.VM_TMP_DIR)
-  vm.RemoteHostCommand('sudo service docker start')
+  vm.RemoteCommand('curl -o %s/docker.rpm -sSL %s'
+                   % (vm_util.VM_TMP_DIR, DOCKER_RPM_URL))
+  vm.RemoteCommand('sudo yum localinstall '
+                   '--nogpgcheck %s/docker.rpm -y' % vm_util.VM_TMP_DIR)
+  vm.RemoteCommand('sudo service docker start')
 
 
 def AptInstall(vm):
   """Installs the docker package on the VM."""
-  vm.RemoteHostCommand('curl -sSL https://get.docker.com/ | sh')
+  vm.RemoteCommand('curl -sSL https://get.docker.com/ | sh')
