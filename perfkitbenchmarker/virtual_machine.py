@@ -214,6 +214,9 @@ class BaseVirtualMachine(resource.BaseResource):
     self.remote_disk_counter = 0
     self.background_cpu_threads = vm_spec.background_cpu_threads
 
+    self.bootable_time = None
+    self.hostname = None
+
     if hasattr(self, 'OS_TYPE'):
       transport_name = (vm_spec.transport or
                         transport.GetDefaultTransportFromOs(self.OS_TYPE))
@@ -233,6 +236,125 @@ class BaseVirtualMachine(resource.BaseResource):
     if self.ip_address:
       return self.ip_address
     return super(BaseVirtualMachine, self).__str__()
+
+  def RemoteCommand(self, command, should_log=False, ignore_failure=False,
+                    suppress_warning=False, timeout=None):
+    """Runs a command on the VM.
+
+    Args:
+      command: A valid command.
+      should_log: A boolean indicating whether the command result should be
+          logged at the info level. Even if it is false, the results will
+          still be logged at the debug level.
+      ignore_failure: Ignore any failure if set to true.
+      suppress_warning: Suppress the result logging from IssueCommand when the
+          return code is non-zero.
+      timeout: The time to wait in seconds for the command before exiting.
+          None means no timeout.
+
+    Returns:
+      A tuple of stdout and stderr from running the command.
+
+    Raises:
+      RemoteCommandError: If there was a problem issuing the command.
+    """
+    return self.transport.RemoteCommand(command, should_log, ignore_failure,
+                                        suppress_warning, timeout)
+
+  def RemoteCopy(self, file_path, remote_path='', copy_to=True):
+    """Copies a file to or from the VM.
+
+    Args:
+      file_path: Local path to file.
+      remote_path: Optional path of where to copy file on remote host.
+      copy_to: True to copy to vm, False to copy from vm.
+
+    Raises:
+      RemoteCommandError: If there was a problem copying the file.
+    """
+    return self.transport.RemoteCopy(file_path, remote_path, copy_to)
+
+  def MoveFile(self, target, source_path, remote_path=''):
+    """Copies a file from one VM to a target VM.
+
+    Args:
+      target: The target BaseVirtualMachine object.
+      source_path: The location of the file on the REMOTE machine.
+      remote_path: The destination of the file on the TARGET machine, default
+          is the home directory.
+    """
+    return self.transport.MoveFile(target, source_path, remote_path)
+
+  @vm_util.Retry(log_errors=False, poll_interval=1)
+  def WaitForBootCompletion(self):
+    """Waits until the VM has booted."""
+    resp, _ = self.transport.RemoteCommand('hostname', suppress_warning=True)
+    if self.bootable_time is None:
+      self.bootable_time = time.time()
+    if self.hostname is None:
+      self.hostname = resp.rstrip()
+
+  def PushFile(self, source_path, remote_path=''):
+    """Copies a file or a directory to the VM.
+
+    Args:
+      source_path: The location of the file or directory on the LOCAL machine.
+      remote_path: The destination of the file on the REMOTE machine, default
+          is the home directory.
+    """
+    self.RemoteCopy(source_path, remote_path)
+
+  def PullFile(self, source_path, remote_path=''):
+    """Copies a file or a directory from the VM.
+
+    Args:
+      source_path: The location of the file or directory on the REMOTE machine.
+      remote_path: The destination of the file on the LOCAL machine, default
+          is the home directory.
+    """
+    self.RemoteCopy(source_path, remote_path, copy_to=False)
+
+  def PushDataFile(self, data_file, remote_path=''):
+    """Upload a file in perfkitbenchmarker.data directory to the VM.
+
+    Args:
+      data_file: The filename of the file to upload.
+      remote_path: The destination for 'data_file' on the VM. If not specified,
+        the file will be placed in the user's home directory.
+    Raises:
+      perfkitbenchmarker.data.ResourceNotFound: if 'data_file' does not exist.
+    """
+    file_path = data.ResourcePath(data_file)
+    self.PushFile(file_path, remote_path)
+
+  def RenderTemplate(self, template_path, remote_path, context):
+    """Renders a local Jinja2 template and copies it to the remote host.
+
+    The template will be provided variables defined in 'context', as well as a
+    variable named 'vm' referencing this object.
+
+    Args:
+      template_path: string. Local path to jinja2 template.
+      remote_path: string. Remote path for rendered file on the remote vm.
+      context: dict. Variables to pass to the Jinja2 template during rendering.
+
+    Raises:
+      jinja2.UndefinedError: if template contains variables not present in
+        'context'.
+      RemoteCommandError: If there was a problem copying the file.
+    """
+    with open(template_path) as fp:
+      template_contents = fp.read()
+
+    environment = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    template = environment.from_string(template_contents)
+    prefix = 'pkb-' + os.path.basename(template_path)
+
+    with vm_util.NamedTemporaryFile(prefix=prefix, dir=vm_util.GetTempDir(),
+                                    delete=False) as tf:
+      tf.write(template.render(vm=self, **context))
+      tf.close()
+      self.RemoteCopy(tf.name, remote_path)
 
   def CreateScratchDisk(self, disk_spec):
     """Create a VM's scratch disk.
@@ -328,62 +450,10 @@ class BaseOsMixin(object):
     super(BaseOsMixin, self).__init__()
     self._installed_packages = set()
 
-    self.bootable_time = None
-    self.hostname = None
-
-    # Ports that will be opened by benchmark_spec to permit access to the VM.
-    self.remote_access_ports = []
-
     # Cached values
     self._reachable = {}
     self._total_memory_kb = None
     self._num_cpus = None
-
-  def RemoteCommand(self, command, should_log=False, ignore_failure=False,
-                    suppress_warning=False, timeout=None):
-    """Runs a command on the VM.
-
-    Args:
-      command: A valid command.
-      should_log: A boolean indicating whether the command result should be
-          logged at the info level. Even if it is false, the results will
-          still be logged at the debug level.
-      ignore_failure: Ignore any failure if set to true.
-      suppress_warning: Suppress the result logging from IssueCommand when the
-          return code is non-zero.
-      timeout: The time to wait in seconds for the command before exiting.
-          None means no timeout.
-
-    Returns:
-      A tuple of stdout and stderr from running the command.
-
-    Raises:
-      RemoteCommandError: If there was a problem issuing the command.
-    """
-    return self.transport.RemoteCommand(command, should_log, ignore_failure,
-                                        suppress_warning, timeout)
-
-  def RemoteCopy(self, file_path, remote_path='', copy_to=True):
-    """Copies a file to or from the VM.
-
-    Args:
-      file_path: Local path to file.
-      remote_path: Optional path of where to copy file on remote host.
-      copy_to: True to copy to vm, False to copy from vm.
-
-    Raises:
-      RemoteCommandError: If there was a problem copying the file.
-    """
-    return self.transport.RemoteCopy(file_path, remote_path, copy_to)
-
-  @vm_util.Retry(log_errors=False, poll_interval=1)
-  def WaitForBootCompletion(self):
-    """Waits until the VM has booted."""
-    resp, _ = self.transport.RemoteCommand('hostname', suppress_warning=True)
-    if self.bootable_time is None:
-      self.bootable_time = time.time()
-    if self.hostname is None:
-      self.hostname = resp.rstrip()
 
   def OnStartup(self):
     """Performs any necessary setup on the VM specific to the OS.
@@ -421,68 +491,6 @@ class BaseOsMixin(object):
   def SetupLocalDisks(self):
     """Perform OS specific setup on any local disks that exist."""
     pass
-
-  def PushFile(self, source_path, remote_path=''):
-    """Copies a file or a directory to the VM.
-
-    Args:
-      source_path: The location of the file or directory on the LOCAL machine.
-      remote_path: The destination of the file on the REMOTE machine, default
-          is the home directory.
-    """
-    self.RemoteCopy(source_path, remote_path)
-
-  def PullFile(self, source_path, remote_path=''):
-    """Copies a file or a directory from the VM.
-
-    Args:
-      source_path: The location of the file or directory on the REMOTE machine.
-      remote_path: The destination of the file on the LOCAL machine, default
-          is the home directory.
-    """
-    self.RemoteCopy(source_path, remote_path, copy_to=False)
-
-  def PushDataFile(self, data_file, remote_path=''):
-    """Upload a file in perfkitbenchmarker.data directory to the VM.
-
-    Args:
-      data_file: The filename of the file to upload.
-      remote_path: The destination for 'data_file' on the VM. If not specified,
-        the file will be placed in the user's home directory.
-    Raises:
-      perfkitbenchmarker.data.ResourceNotFound: if 'data_file' does not exist.
-    """
-    file_path = data.ResourcePath(data_file)
-    self.PushFile(file_path, remote_path)
-
-  def RenderTemplate(self, template_path, remote_path, context):
-    """Renders a local Jinja2 template and copies it to the remote host.
-
-    The template will be provided variables defined in 'context', as well as a
-    variable named 'vm' referencing this object.
-
-    Args:
-      template_path: string. Local path to jinja2 template.
-      remote_path: string. Remote path for rendered file on the remote vm.
-      context: dict. Variables to pass to the Jinja2 template during rendering.
-
-    Raises:
-      jinja2.UndefinedError: if template contains variables not present in
-        'context'.
-      RemoteCommandError: If there was a problem copying the file.
-    """
-    with open(template_path) as fp:
-      template_contents = fp.read()
-
-    environment = jinja2.Environment(undefined=jinja2.StrictUndefined)
-    template = environment.from_string(template_contents)
-    prefix = 'pkb-' + os.path.basename(template_path)
-
-    with vm_util.NamedTemporaryFile(prefix=prefix, dir=vm_util.GetTempDir(),
-                                    delete=False) as tf:
-      tf.write(template.render(vm=self, **context))
-      tf.close()
-      self.RemoteCopy(tf.name, remote_path)
 
   @abc.abstractmethod
   def _CreateScratchDiskFromDisks(self, disk_spec, disks):

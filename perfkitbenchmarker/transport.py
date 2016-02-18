@@ -37,6 +37,7 @@ from perfkitbenchmarker import vm_util
 flags.DEFINE_string('transport', None,
                     'The name of the transport to use (e.g. ssh).')
 
+REMOTE_KEY_PATH = '.ssh/id_rsa'
 RHEL = 'rhel'
 
 SSH_WINDOWS = """
@@ -146,6 +147,17 @@ class BaseTransport(object):
     """
     raise NotImplementedError()
 
+  def MoveFile(self, target, source_path, remote_path=''):
+    """Copies a file from one VM to a target VM.
+
+    Args:
+      target: The target BaseVirtualMachine object.
+      source_path: The location of the file on the REMOTE machine.
+      remote_path: The destination of the file on the TARGET machine, default
+          is the home directory.
+    """
+    raise NotImplementedError()
+
   def OnStartup(self):
     """Commands which will be run after initially connecting to the VM."""
     pass
@@ -222,6 +234,30 @@ class SshTransport(BaseTransport):
                     (retcode, full_cmd, stdout, stderr))
       raise errors.VirtualMachine.RemoteCommandError(error_text)
 
+  def MoveFile(self, target, source_path, remote_path=''):
+    """Copies a file from one VM to a target VM.
+
+    Args:
+      target: The target BaseVirtualMachine object.
+      source_path: The location of the file on the REMOTE machine.
+      remote_path: The destination of the file on the TARGET machine, default
+          is the home directory.
+    """
+    if not self.vm.has_private_key:
+      self.RemoteCopy(target.ssh_private_key, REMOTE_KEY_PATH)
+      self.vm.has_private_key = True
+
+    # TODO(user): For security we may want to include
+    #     -o UserKnownHostsFile=/dev/null in the scp command
+    #     however for the moment, this has happy side effects
+    #     ie: the key is added to know known_hosts which allows
+    #     OpenMPI to operate correctly.
+    remote_location = '%s@%s:%s' % (
+        target.user_name, target.ip_address, remote_path)
+    self.RemoteCommand('scp -P %s -o StrictHostKeyChecking=no -i %s %s %s' %
+                       (target.ssh_port, REMOTE_KEY_PATH, source_path,
+                        remote_location))
+
   def OnStartup(self):
     """Commands which will be run after initially connecting to the VM."""
     if self.vm.OS_TYPE == RHEL:
@@ -241,6 +277,10 @@ class WindowsSshTransport(SshTransport):
     command = 'powershell %s' % command
     return super(WindowsSshTransport, self).RemoteCommand(
         command, should_log, ignore_failure, suppress_warning, timeout)
+
+  def MoveFile(self, target, source_path, remote_path=''):
+    """Copies a file from one VM to a target VM."""
+    raise NotImplementedError()
 
   def GetWindowsScript(self):
     """Returns the Windows startup script to enable this transport."""

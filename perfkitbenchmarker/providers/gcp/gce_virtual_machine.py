@@ -458,3 +458,6 @@ class WindowsGceVirtualMachine(GceVirtualMachine,
     stdout, _ = reset_password_cmd.IssueRetryable()
     response = json.loads(stdout)
     self.password = response['password']
+    print 'ip: %s , pass: %s , user: %s ' % (self.ip_address,
+                                             self.password,
+                                             self.user_name)
