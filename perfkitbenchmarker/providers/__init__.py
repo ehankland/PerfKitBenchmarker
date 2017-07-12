@@ -24,6 +24,7 @@ from perfkitbenchmarker import requirements
 GCP = 'GCP'
 AZURE = 'Azure'
 AWS = 'AWS'
+AWS_ECS = 'AWS_ECS'
 ALICLOUD = 'AliCloud'
 KUBERNETES = 'Kubernetes'
 DIGITALOCEAN = 'DigitalOcean'
@@ -34,7 +35,7 @@ MESOS = 'Mesos'
 PROFITBRICKS = 'ProfitBricks'
 
 VALID_CLOUDS = (GCP, AZURE, AWS, DIGITALOCEAN, KUBERNETES, OPENSTACK,
-                RACKSPACE, CLOUDSTACK, ALICLOUD, MESOS, PROFITBRICKS)
+                RACKSPACE, CLOUDSTACK, ALICLOUD, MESOS, PROFITBRICKS, AWS_ECS)
 
 
 _imported_providers = set()

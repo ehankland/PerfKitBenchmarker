@@ -164,6 +164,32 @@ def GetBlockDeviceMap(machine_type, root_volume_size_gb=None,
   return None
 
 
+def GetImage(machine_type, region, disk_type, image_name):
+    """Returns the image given the machine type and region."""
+    prefix = machine_type.split('.')[0]
+    virt_type = 'paravirtual' if prefix in NON_HVM_PREFIXES else 'hvm'
+
+    describe_cmd = util.AWS_PREFIX + [
+        '--region=%s' % region,
+        'ec2',
+        'describe-images',
+        '--query', 'Images[*].{Name:Name,ImageId:ImageId}',
+        '--filters',
+        'Name=name,Values=%s' % image_name,
+        'Name=block-device-mapping.volume-type,Values=%s' % disk_type,
+        'Name=virtualization-type,Values=%s' % virt_type]
+    stdout, _ = util.IssueRetryableCommand(describe_cmd)
+
+    if not stdout:
+      return None
+
+    images = json.loads(stdout)
+    # We want to return the latest version of the image, and since the wildcard
+    # portion of the image name is the image's creation date, we can just take
+    # the image with the 'largest' name.
+    return max(images, key=lambda image: image['Name'])['ImageId']
+
+
 def IsPlacementGroupCompatible(machine_type):
   """Returns True if VMs of 'machine_type' can be put in a placement group."""
   prefix = machine_type.split('.')[0]
@@ -312,6 +338,8 @@ class AwsVirtualMachine(virtual_machine.BaseVirtualMachine):
     self.client_token = str(uuid.uuid4())
     self.host = None
     self.id = None
+    self.iam_profile_name = None
+    self.src_dest_check = True
 
     if self.use_dedicated_host and util.IsRegion(self.zone):
       raise ValueError(
@@ -346,29 +374,8 @@ class AwsVirtualMachine(virtual_machine.BaseVirtualMachine):
     if cls.IMAGE_NAME_FILTER is None:
       return None
 
-    prefix = machine_type.split('.')[0]
-    virt_type = 'paravirtual' if prefix in NON_HVM_PREFIXES else 'hvm'
-
-    describe_cmd = util.AWS_PREFIX + [
-        '--region=%s' % region,
-        'ec2',
-        'describe-images',
-        '--query', 'Images[*].{Name:Name,ImageId:ImageId}',
-        '--filters',
-        'Name=name,Values=%s' % cls.IMAGE_NAME_FILTER,
-        'Name=block-device-mapping.volume-type,Values=%s' %
-        cls.DEFAULT_ROOT_DISK_TYPE,
-        'Name=virtualization-type,Values=%s' % virt_type]
-    stdout, _ = util.IssueRetryableCommand(describe_cmd)
-
-    if not stdout:
-      return None
-
-    images = json.loads(stdout)
-    # We want to return the latest version of the image, and since the wildcard
-    # portion of the image name is the image's creation date, we can just take
-    # the image with the 'largest' name.
-    return max(images, key=lambda image: image['Name'])['ImageId']
+    return GetImage(machine_type, region,
+                    cls.DEFAULT_ROOT_DISK_TYPE, cls.IMAGE_NAME_FILTER)
 
   def ImportKeyfile(self):
     """Imports the public keyfile to AWS."""
@@ -423,6 +430,13 @@ class AwsVirtualMachine(virtual_machine.BaseVirtualMachine):
 
     assert self.group_id == instance['SecurityGroups'][0]['GroupId'], (
         self.group_id, instance['SecurityGroups'][0]['GroupId'])
+
+    if not self.src_dest_check:
+      modify_cmd = util.AWS_PREFIX + [
+          'ec2', 'modify-instance-attribute',
+          '--instance-id', self.id,
+          '--no-source-dest-check']
+      util.IssueRetryableCommand(modify_cmd)
 
   def _CreateDependencies(self):
     """Create VM dependencies."""
@@ -483,6 +497,9 @@ class AwsVirtualMachine(virtual_machine.BaseVirtualMachine):
         '--image-id=%s' % self.image,
         '--instance-type=%s' % self.machine_type,
         '--key-name=%s' % 'perfkit-key-%s' % FLAGS.run_uri]
+    if self.iam_profile_name:
+      create_cmd.append(
+          '--iam-instance-profile=Name=%s' % self.iam_profile_name)
     if block_device_map:
       create_cmd.append('--block-device-mappings=%s' % block_device_map)
     if placement:
@@ -530,6 +547,9 @@ class AwsVirtualMachine(virtual_machine.BaseVirtualMachine):
       launch_specification['BlockDeviceMappings'] = json.loads(
           block_device_map, object_pairs_hook=collections.OrderedDict)
     launch_specification['NetworkInterfaces'] = network_interface
+    if self.iam_profile_name:
+      launch_specification['IamInstanceProfile'] = collections.OrderedDict([
+          ('Name', self.iam_profile_name)])
     create_cmd = util.AWS_PREFIX + [
         'ec2',
         'request-spot-instances',

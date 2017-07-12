@@ -23,7 +23,7 @@ from perfkitbenchmarker import vm_util
 from perfkitbenchmarker.providers.gcp import util
 
 FLAGS = flags.FLAGS
-_KUBERNETES_MASTER_VERSION = '1.6.2'
+_KUBERNETES_MASTER_VERSION = '1.6.4'
 
 
 class GkeCluster(container_service.KubernetesCluster):
@@ -32,7 +32,6 @@ class GkeCluster(container_service.KubernetesCluster):
 
   def __init__(self, spec):
     super(GkeCluster, self).__init__(spec)
-    self.name = 'pkb-%s' % FLAGS.run_uri
     self.project = spec.vm_spec.project
 
   def _Create(self):

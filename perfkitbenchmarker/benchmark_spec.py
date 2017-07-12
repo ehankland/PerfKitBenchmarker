@@ -310,6 +310,9 @@ class BenchmarkSpec(object):
 
   def Provision(self):
     """Prepares the VMs and networks necessary for the benchmark to run."""
+    if self.container_cluster:
+      self.container_cluster.Create()
+
     # Sort networks into a guaranteed order of creation based on dict key.
     # There is a finite limit on the number of threads that are created to
     # provision networks. Until support is added to provision resources in an
@@ -323,7 +326,8 @@ class BenchmarkSpec(object):
     vm_util.RunThreaded(lambda net: net.Create(), networks)
 
     if self.container_cluster:
-      self.container_cluster.Create()
+      vm_util.RunThreaded(self.PrepareVm, self.container_cluster.vms)
+      self.container_cluster.PrepareVms()
 
     if self.vms:
       vm_util.RunThreaded(self.PrepareVm, self.vms)
@@ -348,6 +352,9 @@ class BenchmarkSpec(object):
     if self.dpb_service:
       self.dpb_service.Delete()
 
+    if self.container_cluster:
+      vm_util.RunThreaded(self.DeleteVm, self.container_cluster.vms)
+
     if self.vms:
       try:
         vm_util.RunThreaded(self.DeleteVm, self.vms)
@@ -368,6 +375,7 @@ class BenchmarkSpec(object):
       except Exception:
         logging.exception('Got an exception deleting networks. '
                           'Attempting to continue tearing down.')
+
     if self.container_cluster:
       self.container_cluster.Delete()
 
